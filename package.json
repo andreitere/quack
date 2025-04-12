@@ -1,0 +1,26 @@
+{
+  "name": "quack",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@duckdb/node-api": "1.2.2-alpha.18",
+    "@fastify/cors": "^11.0.1",
+    "@hono/node-server": "^1.14.0",
+    "arg": "^5.0.2",
+    "fastify": "^5.2.2",
+    "hono": "^4.7.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
