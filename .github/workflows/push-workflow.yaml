@@ -1,9 +1,7 @@
 name: Build and Deploy Quackbook
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -41,6 +39,7 @@ jobs:
           cp -r quackbook/dist/* public/quackbook/
 
       - name: Commit and push changes
+        uses: actions/checkout@v4
         run: |
           git add public/quackbook
           git commit -m "Update quackbook dist folder"
