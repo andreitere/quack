@@ -41,8 +41,6 @@ jobs:
           mkdir -p public/quackbook
           cp -r quackbook/dist/* public/quackbook/
 
-      - name: Commit and push changes
-        uses: actions/checkout@v4
       - run: |
           git add public/quackbook
           git commit -m "Update quackbook dist folder"
