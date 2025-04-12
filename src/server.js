@@ -1,18 +1,16 @@
 #!/usr/bin/env node
-import { Hono } from "hono";
-import { serve } from "@hono/node-server";
-import { cors } from "hono/cors";
-import { timing } from "hono/timing";
-import { requestId } from "hono/request-id";
-import { logger  } from "hono/logger";
-import duckdb, { version } from "@duckdb/node-api";
-import arg from "arg";
-import { stream } from "hono/streaming";
+import express from "express";
+import cors from "cors";
+import duckdb from "@duckdb/node-api";
 import { DuckDBTypeId } from "@duckdb/node-api";
 import winston from "winston";
 import open from "open";
-import { serveStatic } from "@hono/node-server/serve-static";
+import path from "path";
+import { fileURLToPath } from "url";
+import arg from "arg";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const args = arg({
   "--port": Number,
@@ -26,11 +24,8 @@ const host = args["--host"] || "localhost";
 const db = args["--db"] || ":memory:";
 const openBrowser = args["--open"] || false;
 
-
-
-
 // Configure Winston logger
-const _logger = winston.createLogger({
+const logger = winston.createLogger({
   level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
@@ -78,22 +73,12 @@ const convertDuckDBValue = (value, typeId) => {
 
     case DuckDBTypeId.ARRAY:
     case DuckDBTypeId.LIST:
-      // return value.items.map((item) => convertDuckDBValue(item, item.typeId));
       return JSON.stringify(value);
 
     case DuckDBTypeId.STRUCT:
-      // return Object.fromEntries(
-      //   value.entries.map(([key, val]) => [key, convertDuckDBValue(val, val.typeId)])
-      // );
       return JSON.stringify(value);
 
     case DuckDBTypeId.MAP:
-      // return Object.fromEntries(
-      //   value.entries.map(({ key, value: val }) => [
-      //     convertDuckDBValue(key, key.typeId),
-      //     convertDuckDBValue(val, val.typeId),
-      //   ])
-      // );
       return JSON.stringify(value);
 
     case DuckDBTypeId.DECIMAL:
@@ -112,10 +97,6 @@ const convertDuckDBValue = (value, typeId) => {
       return value.toBools();
 
     case DuckDBTypeId.UNION:
-      // return {
-      //   tag: value.tag,
-      //   value: convertDuckDBValue(value.value, value.value.typeId),
-      // };
       return JSON.stringify(value);
 
     default:
@@ -123,25 +104,20 @@ const convertDuckDBValue = (value, typeId) => {
   }
 };
 
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-
-
-
-const app = new Hono({ port });
-app.use("*", cors());
-app.use("*", timing());
-app.use("*", requestId());
-app.use("*", logger());
-
-
+// Initialize DuckDB
 const instance = await duckdb.DuckDBInstance.create(db);
 const connection = await instance.connect();
 connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
-// /query endpoint - returns a simple response
-app.post("/query", async (c) => {
+
+// Query endpoint
+app.post("/query", async (req, res) => {
   try {
-    const { query, withColumns = false } = await c.req.json();
-    _logger.info({ message: "Processing query request", query });
+    const { query, withColumns = false } = req.body;
+    logger.info({ message: "Processing query request", query });
     const connection = await instance.connect();
     const result = await connection.run(query);
     const rawData = await result.getRowObjectsJson();
@@ -156,43 +132,44 @@ app.post("/query", async (c) => {
       return processedRow;
     });
     connection.closeSync();
-    return c.json({
+    res.json({
       result: processedData,
       columns: withColumns ? columnTypes : [],
     });
   } catch (error) {
-    _logger.error({
+    logger.error({
       message: "DuckDB Error",
       error: error.message,
       stack: error.stack,
     });
     connection?.closeSync();
-    return c.json(
-      {
-        error: error.message,
-      },
-      400
-    );
+    res.status(400).json({
+      error: error.message,
+    });
   }
 });
 
-app.get("/duckdb", async (c) => {
-  return {
+// DuckDB version endpoint
+app.get("/duckdb", (req, res) => {
+  res.json({
     version: duckdb.version(),
-  };
+  });
 });
 
-app.post("/describe", async (c) => {
-  const { query } = await c.req.json();
+// Describe endpoint
+app.post("/describe", async (req, res) => {
+  const { query } = req.body;
   const connection = await instance.connect();
   const result = await connection.run(query);
-  return result.columnNameAndTypeObjectsJson();
+  res.json(result.columnNameAndTypeObjectsJson());
 });
 
-app.post("/stream", async (c) => {
+// Stream endpoint
+app.post("/stream", async (req, res) => {
   try {
-    const { query, bufferSize = 100000 } = await c.req.json();
-    _logger.info({ message: "Processing stream request", query });
+    const { query, bufferSize = 100000 } = req.body;
+    console.log(query);
+    logger.info({ message: "Processing stream request" });
     const connection = await instance.connect();
     let reader = await connection.streamAndReadAll(query);
     const columnTypes = (await reader.columnNameAndTypeObjectsJson()).reduce(
@@ -204,79 +181,45 @@ app.post("/stream", async (c) => {
     );
     const _dedupedColumnNames = reader.deduplicatedColumnNames();
 
-    c.header("Transfer-Encoding", "chunked");
-    c.header("Content-Type", "application/json");
-    return stream(c, async (stream) => {
-      try {
-        stream.onAbort((e) => {
-          _logger.warn({ message: "Stream aborted", error: e });
-          connection.closeSync();
-        });
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("Content-Type", "application/json");
 
-        let currentBatch = 0;
-        const batchSize = 100000;
-        for (const chunk of reader.chunks) {
-          _logger.debug({
-            message: "Processing chunk",
-            chunkNumber: currentBatch,
-          });
-          const rows = chunk.getRowObjects(_dedupedColumnNames);
-          if (rows.length > 0) {
-            const processedRows = rows.map((row) => {
-              const processedRow = {};
-              for (const [key, value] of Object.entries(row)) {
-                const columnType = columnTypes[key];
-                processedRow[key] = convertDuckDBValue(value, columnType);
-              }
-              return processedRow;
-            });
-            await stream.write(JSON.stringify(processedRows) + "\n");
+    for (const chunk of reader.chunks) {
+      const rows = chunk.getRowObjects(_dedupedColumnNames);
+      if (rows.length > 0) {
+        const processedRows = rows.map((row) => {
+          const processedRow = {};
+          for (const [key, value] of Object.entries(row)) {
+            const columnType = columnTypes[key];
+            processedRow[key] = convertDuckDBValue(value, columnType);
           }
-
-          _logger.debug({
-            message: "Stream progress",
-            done: reader.done_,
-            currentRowCount: reader.currentRowCount,
-          });
-        }
-      } catch (error) {
-        _logger.error({
-          message: "Error during streaming",
-          error: error.message,
-          stack: error.stack,
+          return processedRow;
         });
-        connection?.closeSync();
-        throw error;
-      } finally {
-        connection.closeSync();
+        res.write(JSON.stringify(processedRows) + "\n");
       }
-    });
+    }
+
+    res.end();
+    connection.closeSync();
   } catch (error) {
-    _logger.error({
+    logger.error({
       message: "Error in stream endpoint",
       error: error.message,
       stack: error.stack,
     });
-    return c.json(
-      {
-        error: error.message,
-      },
-      400
-    );
+    res.status(400).json({
+      error: error.message,
+    });
   }
 });
 
-app.get(
-  "*",
-  serveStatic({
-    root: "./public/quackbook",
-    index: "index.html",
-  })
-);
+// Serve static files
+app.use(express.static(path.join(__dirname, "../public/quackbook")));
 
-serve(app, () => {
+// Start server
+app.listen(port, () => {
   const address = `http://${host}:${port}`;
-  _logger.info({
+  logger.info({
     message: `Go to ${address}/#/?quackMode=true&serverPort=${port}`,
   });
   if (openBrowser) {
