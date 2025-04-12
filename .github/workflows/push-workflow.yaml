@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout current repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Checkout quackbook repository
         uses: actions/checkout@v4
@@ -41,7 +43,14 @@ jobs:
           mkdir -p public/quackbook
           cp -r quackbook/dist/* public/quackbook/
 
-      - run: |
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and push changes
+        run: |
           git add public/quackbook
-          git commit -m "Update quackbook dist folder"
+          git status
+          git commit -m "Update quackbook dist folder" || echo "No changes to commit"
           git push
