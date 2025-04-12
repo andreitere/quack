@@ -8,6 +8,26 @@ import duckdb, { version } from "@duckdb/node-api";
 import arg from "arg";
 import { stream } from "hono/streaming";
 import { DuckDBTypeId } from "@duckdb/node-api";
+import winston from "winston";
+import open from "open";
+// Configure Winston logger
+const logger = winston.createLogger({
+  level: "info",
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      ),
+    }),
+    new winston.transports.File({ filename: "error.log", level: "error" }),
+    new winston.transports.File({ filename: "combined.log" }),
+  ],
+});
 
 BigInt.prototype.toJSON = function () {
   return this.toString();
@@ -94,12 +114,13 @@ const args = arg({
   "--port": Number,
   "--host": String,
   "--db": String,
+  "--open": Boolean,
 });
 
 const port = args["--port"] || 3000;
 const host = args["--host"] || "0.0.0.0";
 const db = args["--db"] || ":memory:";
-
+const openBrowser = args["--open"] || false;
 const instance = await duckdb.DuckDBInstance.create(db);
 const connection = await instance.connect();
 connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
@@ -107,7 +128,7 @@ connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
 app.post("/query", async (c) => {
   try {
     const { query, withColumns = false } = await c.req.json();
-    console.log(`/query`, query);
+    logger.info({ message: "Processing query request", query });
     const connection = await instance.connect();
     const result = await connection.run(query);
     const rawData = await result.getRowObjectsJson();
@@ -127,7 +148,11 @@ app.post("/query", async (c) => {
       columns: withColumns ? columnTypes : [],
     });
   } catch (error) {
-    console.error("DuckDB Error:", error);
+    logger.error({
+      message: "DuckDB Error",
+      error: error.message,
+      stack: error.stack,
+    });
     connection?.closeSync();
     return c.json(
       {
@@ -151,28 +176,10 @@ app.post("/describe", async (c) => {
   return result.columnNameAndTypeObjectsJson();
 });
 
-// /stream endpoint - streams data
-// app.post("/stream", async (c) => {
-//   const { query } = await c.req.json();
-//   const connection = await instance.connect();
-//   const result = await connection.streamAndReadAll(query);
-//   console.log(typeof result);
-//   // Set response headers for streaming
-//   c.header("Content-Type", "application/ndjson");
-//   c.header("Transfer-Encoding", "chunked");
-
-//   let first = true;
-//   return stream(c, async (stream) => {
-//     for await (const row of result.getRowObjectsJson()) {
-//       stream.writeln(JSON.stringify(row));
-//     }
-//   });
-// });
-
 app.post("/stream", async (c) => {
   try {
     const { query, bufferSize = 100000 } = await c.req.json();
-    console.log(`/stream`, query);
+    logger.info({ message: "Processing stream request", query });
     const connection = await instance.connect();
     let reader = await connection.streamAndReadAll(query);
     const columnTypes = (await reader.columnNameAndTypeObjectsJson()).reduce(
@@ -189,15 +196,17 @@ app.post("/stream", async (c) => {
     return stream(c, async (stream) => {
       try {
         stream.onAbort((e) => {
-          console.log(e);
+          logger.warn({ message: "Stream aborted", error: e });
           connection.closeSync();
-          console.log("Aborted!");
         });
 
         let currentBatch = 0;
         const batchSize = 100000;
         for (const chunk of reader.chunks) {
-          console.log(chunk);
+          logger.debug({
+            message: "Processing chunk",
+            chunkNumber: currentBatch,
+          });
           const rows = chunk.getRowObjects(_dedupedColumnNames);
           if (rows.length > 0) {
             const processedRows = rows.map((row) => {
@@ -211,10 +220,18 @@ app.post("/stream", async (c) => {
             await stream.write(JSON.stringify(processedRows) + "\n");
           }
 
-          console.log("readUntil", reader.done_, reader.currentRowCount);
+          logger.debug({
+            message: "Stream progress",
+            done: reader.done_,
+            currentRowCount: reader.currentRowCount,
+          });
         }
       } catch (error) {
-        console.error("Error during streaming:", error);
+        logger.error({
+          message: "Error during streaming",
+          error: error.message,
+          stack: error.stack,
+        });
         connection?.closeSync();
         throw error;
       } finally {
@@ -222,7 +239,11 @@ app.post("/stream", async (c) => {
       }
     });
   } catch (error) {
-    console.error("Error in stream endpoint:", error);
+    logger.error({
+      message: "Error in stream endpoint",
+      error: error.message,
+      stack: error.stack,
+    });
     return c.json(
       {
         error: error.message,
@@ -238,6 +259,10 @@ serve(
     port,
   },
   () => {
-    console.log(`Server is running on http://${host}:${port}`);
+    const address = `http://${host}:${port}`;
+    logger.info({ message: `Server is running on ${address}` });
+    if (openBrowser) {
+      open(`http://${host}:${port}`);
+    }
   }
 );
