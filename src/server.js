@@ -8,6 +8,7 @@ import open from "open";
 import path from "path";
 import { fileURLToPath } from "url";
 import arg from "arg";
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,8 +30,10 @@ const logger = winston.createLogger({
   level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
     winston.format.json()
   ),
+  defaultMeta: { service: "quack-server" },
   transports: [
     new winston.transports.Console({
       format: winston.format.combine(
@@ -38,8 +41,21 @@ const logger = winston.createLogger({
         winston.format.simple()
       ),
     }),
-    new winston.transports.File({ filename: "error.log", level: "error" }),
-    new winston.transports.File({ filename: "combined.log" }),
+    new winston.transports.DailyRotateFile({
+      filename: "logs/error-%DATE%.log",
+      datePattern: "YYYY-MM-DD",
+      zippedArchive: true,
+      maxSize: "20m",
+      maxFiles: "14d",
+      level: "error"
+    }),
+    new winston.transports.DailyRotateFile({
+      filename: "logs/combined-%DATE%.log",
+      datePattern: "YYYY-MM-DD",
+      zippedArchive: true,
+      maxSize: "20m",
+      maxFiles: "14d"
+    })
   ],
 });
 
@@ -108,6 +124,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    logger.info({
+      message: "HTTP Request",
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${duration}ms`,
+      ip: req.ip,
+      userAgent: req.get("user-agent")
+    });
+  });
+  next();
+});
+
 // Initialize DuckDB
 const instance = await duckdb.DuckDBInstance.create(db);
 const connection = await instance.connect();
@@ -115,9 +149,16 @@ connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
 
 // Query endpoint
 app.post("/query", async (req, res) => {
+  const requestId = crypto.randomUUID();
   try {
     const { query, withColumns = false } = req.body;
-    logger.info({ message: "Processing query request", query });
+    logger.info({ 
+      message: "Processing query request",
+      requestId,
+      query,
+      withColumns 
+    });
+    
     const connection = await instance.connect();
     const result = await connection.run(query);
     const rawData = await result.getRowObjectsJson();
@@ -131,6 +172,13 @@ app.post("/query", async (req, res) => {
       }
       return processedRow;
     });
+    
+    logger.info({
+      message: "Query completed successfully",
+      requestId,
+      rowCount: processedData.length
+    });
+    
     connection.closeSync();
     res.json({
       result: processedData,
@@ -139,8 +187,10 @@ app.post("/query", async (req, res) => {
   } catch (error) {
     logger.error({
       message: "DuckDB Error",
+      requestId,
       error: error.message,
       stack: error.stack,
+      query: req.body.query
     });
     connection?.closeSync();
     res.status(400).json({
@@ -166,10 +216,16 @@ app.post("/describe", async (req, res) => {
 
 // Stream endpoint
 app.post("/stream", async (req, res) => {
+  const requestId = crypto.randomUUID();
   try {
     const { query, bufferSize = 100000 } = req.body;
-    console.log(query);
-    logger.info({ message: "Processing stream request" });
+    logger.info({ 
+      message: "Processing stream request",
+      requestId,
+      query,
+      bufferSize 
+    });
+    
     const connection = await instance.connect();
     let reader = await connection.streamAndReadAll(query);
     const columnTypes = (await reader.columnNameAndTypeObjectsJson()).reduce(
@@ -184,9 +240,11 @@ app.post("/stream", async (req, res) => {
     res.setHeader("Transfer-Encoding", "chunked");
     res.setHeader("Content-Type", "application/json");
 
+    let rowCount = 0;
     for (const chunk of reader.chunks) {
       const rows = chunk.getRowObjects(_dedupedColumnNames);
       if (rows.length > 0) {
+        rowCount += rows.length;
         const processedRows = rows.map((row) => {
           const processedRow = {};
           for (const [key, value] of Object.entries(row)) {
@@ -199,13 +257,21 @@ app.post("/stream", async (req, res) => {
       }
     }
 
+    logger.info({
+      message: "Stream completed successfully",
+      requestId,
+      rowCount
+    });
+
     res.end();
     connection.closeSync();
   } catch (error) {
     logger.error({
       message: "Error in stream endpoint",
+      requestId,
       error: error.message,
       stack: error.stack,
+      query: req.body.query
     });
     res.status(400).json({
       error: error.message,
@@ -220,7 +286,11 @@ app.use(express.static(path.join(__dirname, "../public/quackbook")));
 app.listen(port, () => {
   const address = `http://${host}:${port}`;
   logger.info({
-    message: `Go to ${address}/#/?quackMode=true&serverPort=${port}`,
+    message: "Server started",
+    address,
+    port,
+    host,
+    db
   });
   if (openBrowser) {
     open(`${address}/#/?quackMode=true&serverPort=${port}`);
