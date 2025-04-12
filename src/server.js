@@ -232,6 +232,12 @@ app.post("/stream", async (c) => {
   }
 });
 
-serve(app, { port, hostname: host }, () => {
-  console.log(`Server is running on http://${host}:${port}`);
-});
+serve(
+  {
+    fetch: app.fetch,
+    port,
+  },
+  () => {
+    console.log(`Server is running on http://${host}:${port}`);
+  }
+);
