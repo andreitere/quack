@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { cors } from "hono/cors";
 import { timing } from "hono/timing";
 import { requestId } from "hono/request-id";
+import { logger  } from "hono/logger";
 import duckdb, { version } from "@duckdb/node-api";
 import arg from "arg";
 import { stream } from "hono/streaming";
@@ -12,8 +13,24 @@ import winston from "winston";
 import open from "open";
 import { serveStatic } from "@hono/node-server/serve-static";
 
+
+const args = arg({
+  "--port": Number,
+  "--host": String,
+  "--db": String,
+  "--open": Boolean,
+});
+
+const port = args["--port"] || 3000;
+const host = args["--host"] || "localhost";
+const db = args["--db"] || ":memory:";
+const openBrowser = args["--open"] || false;
+
+
+
+
 // Configure Winston logger
-const logger = winston.createLogger({
+const _logger = winston.createLogger({
   level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
@@ -106,24 +123,17 @@ const convertDuckDBValue = (value, typeId) => {
   }
 };
 
-const app = new Hono();
 
+
+
+
+const app = new Hono({ port });
 app.use("*", cors());
 app.use("*", timing());
 app.use("*", requestId());
-app.use("*", serveStatic({ root: "./public/quackbook" }));
+app.use("*", logger());
 
-const args = arg({
-  "--port": Number,
-  "--host": String,
-  "--db": String,
-  "--open": Boolean,
-});
 
-const port = args["--port"] || 3000;
-const host = args["--host"] || "localhost";
-const db = args["--db"] || ":memory:";
-const openBrowser = args["--open"] || false;
 const instance = await duckdb.DuckDBInstance.create(db);
 const connection = await instance.connect();
 connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
@@ -131,7 +141,7 @@ connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
 app.post("/query", async (c) => {
   try {
     const { query, withColumns = false } = await c.req.json();
-    logger.info({ message: "Processing query request", query });
+    _logger.info({ message: "Processing query request", query });
     const connection = await instance.connect();
     const result = await connection.run(query);
     const rawData = await result.getRowObjectsJson();
@@ -151,7 +161,7 @@ app.post("/query", async (c) => {
       columns: withColumns ? columnTypes : [],
     });
   } catch (error) {
-    logger.error({
+    _logger.error({
       message: "DuckDB Error",
       error: error.message,
       stack: error.stack,
@@ -182,7 +192,7 @@ app.post("/describe", async (c) => {
 app.post("/stream", async (c) => {
   try {
     const { query, bufferSize = 100000 } = await c.req.json();
-    logger.info({ message: "Processing stream request", query });
+    _logger.info({ message: "Processing stream request", query });
     const connection = await instance.connect();
     let reader = await connection.streamAndReadAll(query);
     const columnTypes = (await reader.columnNameAndTypeObjectsJson()).reduce(
@@ -199,14 +209,14 @@ app.post("/stream", async (c) => {
     return stream(c, async (stream) => {
       try {
         stream.onAbort((e) => {
-          logger.warn({ message: "Stream aborted", error: e });
+          _logger.warn({ message: "Stream aborted", error: e });
           connection.closeSync();
         });
 
         let currentBatch = 0;
         const batchSize = 100000;
         for (const chunk of reader.chunks) {
-          logger.debug({
+          _logger.debug({
             message: "Processing chunk",
             chunkNumber: currentBatch,
           });
@@ -223,14 +233,14 @@ app.post("/stream", async (c) => {
             await stream.write(JSON.stringify(processedRows) + "\n");
           }
 
-          logger.debug({
+          _logger.debug({
             message: "Stream progress",
             done: reader.done_,
             currentRowCount: reader.currentRowCount,
           });
         }
       } catch (error) {
-        logger.error({
+        _logger.error({
           message: "Error during streaming",
           error: error.message,
           stack: error.stack,
@@ -242,7 +252,7 @@ app.post("/stream", async (c) => {
       }
     });
   } catch (error) {
-    logger.error({
+    _logger.error({
       message: "Error in stream endpoint",
       error: error.message,
       stack: error.stack,
@@ -256,16 +266,20 @@ app.post("/stream", async (c) => {
   }
 });
 
-serve(
-  {
-    fetch: app.fetch,
-    port,
-  },
-  () => {
-    const address = `http://${host}:${port}`;
-    logger.info({ message: `Go to ${address}/#/?quackMode=true&serverPort=${port}` });
-    if (openBrowser) {
-      open(`${address}/#/?quackMode=true&serverPort=${port}`);
-    }
-  }
+app.get(
+  "*",
+  serveStatic({
+    root: "./public/quackbook",
+    index: "index.html",
+  })
 );
+
+serve(app, () => {
+  const address = `http://${host}:${port}`;
+  _logger.info({
+    message: `Go to ${address}/#/?quackMode=true&serverPort=${port}`,
+  });
+  if (openBrowser) {
+    open(`${address}/#/?quackMode=true&serverPort=${port}`);
+  }
+});
