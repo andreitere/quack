@@ -104,26 +104,37 @@ const connection = await instance.connect();
 connection.run("INSTALL nanoarrow FROM community; LOAD nanoarrow;");
 // /query endpoint - returns a simple response
 app.post("/query", async (c) => {
-  const { query, withColumns = false } = await c.req.json();
-  console.log(`/query`, query);
-  const connection = await instance.connect();
-  const result = await connection.run(query);
-  const rawData = await result.getRowObjectsJson();
-  const columnTypes = await result.columnNameAndTypeObjectsJson();
+  try {
+    const { query, withColumns = false } = await c.req.json();
+    console.log(`/query`, query);
+    const connection = await instance.connect();
+    const result = await connection.run(query);
+    const rawData = await result.getRowObjectsJson();
+    const columnTypes = await result.columnNameAndTypeObjectsJson();
 
-  const processedData = rawData.map((row) => {
-    const processedRow = {};
-    for (const [key, value] of Object.entries(row)) {
-      const columnType = columnTypes.find((col) => col.name === key);
-      processedRow[key] = convertDuckDBValue(value, columnType?.typeId);
-    }
-    return processedRow;
-  });
-  connection.closeSync();
-  return c.json({
-    result: processedData,
-    columns: withColumns ? columnTypes : [],
-  });
+    const processedData = rawData.map((row) => {
+      const processedRow = {};
+      for (const [key, value] of Object.entries(row)) {
+        const columnType = columnTypes.find((col) => col.name === key);
+        processedRow[key] = convertDuckDBValue(value, columnType?.typeId);
+      }
+      return processedRow;
+    });
+    connection.closeSync();
+    return c.json({
+      result: processedData,
+      columns: withColumns ? columnTypes : [],
+    });
+  } catch (error) {
+    console.error("DuckDB Error:", error);
+    connection?.closeSync();
+    return c.json(
+      {
+        error: error.message,
+      },
+      400
+    );
+  }
 });
 
 app.get("/duckdb", async (c) => {
@@ -185,7 +196,7 @@ app.post("/stream", async (c) => {
         let currentBatch = 0;
         const batchSize = 100000;
         for (const chunk of reader.chunks) {
-          console.log(chunk)
+          console.log(chunk);
           const rows = chunk.getRowObjects(_dedupedColumnNames);
           if (rows.length > 0) {
             const processedRows = rows.map((row) => {
@@ -203,6 +214,7 @@ app.post("/stream", async (c) => {
         }
       } catch (error) {
         console.error("Error during streaming:", error);
+        connection?.closeSync();
         throw error;
       } finally {
         connection.closeSync();
@@ -210,7 +222,12 @@ app.post("/stream", async (c) => {
     });
   } catch (error) {
     console.error("Error in stream endpoint:", error);
-    return c.json({ error: error.message }, 500);
+    return c.json(
+      {
+        error: error.message,
+      },
+      400
+    );
   }
 });
 
