@@ -1,5 +1,8 @@
 name: Build and Deploy Quackbook
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
 
@@ -40,7 +43,7 @@ jobs:
 
       - name: Commit and push changes
         uses: actions/checkout@v4
-        run: |
+      - run: |
           git add public/quackbook
           git commit -m "Update quackbook dist folder"
           git push
