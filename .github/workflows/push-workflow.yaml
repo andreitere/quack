@@ -1,4 +1,4 @@
-name: Build and Deploy Quackbook
+name: Update quackbook build
 
 permissions:
   contents: write

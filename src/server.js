@@ -10,6 +10,8 @@ import { stream } from "hono/streaming";
 import { DuckDBTypeId } from "@duckdb/node-api";
 import winston from "winston";
 import open from "open";
+import { serveStatic } from "@hono/node-server/serve-static";
+
 // Configure Winston logger
 const logger = winston.createLogger({
   level: "info",
@@ -109,6 +111,7 @@ const app = new Hono();
 app.use("*", cors());
 app.use("*", timing());
 app.use("*", requestId());
+app.use("*", serveStatic({ root: "./public/quackbook" }));
 
 const args = arg({
   "--port": Number,
@@ -118,7 +121,7 @@ const args = arg({
 });
 
 const port = args["--port"] || 3000;
-const host = args["--host"] || "0.0.0.0";
+const host = args["--host"] || "localhost";
 const db = args["--db"] || ":memory:";
 const openBrowser = args["--open"] || false;
 const instance = await duckdb.DuckDBInstance.create(db);
@@ -260,9 +263,9 @@ serve(
   },
   () => {
     const address = `http://${host}:${port}`;
-    logger.info({ message: `Server is running on ${address}` });
+    logger.info({ message: `Go to ${address}/#/?quackMode=true&serverPort=${port}` });
     if (openBrowser) {
-      open(`http://${host}:${port}`);
+      open(`${address}/#/?quackMode=true&serverPort=${port}`);
     }
   }
 );
