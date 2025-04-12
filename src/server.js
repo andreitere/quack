@@ -232,6 +232,6 @@ app.post("/stream", async (c) => {
   }
 });
 
-serve(app, () => {
+serve(app, { port, hostname: host }, () => {
   console.log(`Server is running on http://${host}:${port}`);
 });
