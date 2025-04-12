@@ -1,20 +1,41 @@
-# Quack
+# Quack 🦆
 
-Run Quackbook close to your data. A thin, hono based wrapper for Quackbook and DuckDB 🔥.
+A lightweight Express-based wrapper for DuckDB that brings [Quackbook](https://github.com/andreitere/quackbook) to your local environment.
 
 ## Features
 
 - REST API for DuckDB operations
 - Support for both regular queries and streaming large datasets
-- [Quackbook](https://github.com/andreitere/quackbook) on your local machine.
+- Local execution of Quackbook queries
 
-## To run it
+## Installation
 
+### Global Installation
 ```bash
-npx andreitere/quack --port 3001 --open
+npm install -g andreitere/quack
 ```
 
-## Dependencies
+### Quick Start
+```bash
+npx andreitere/quack --open
+```
 
-- [@duckdb/node-api](https://github.com/duckdb/duckdb-node-api)
-- [Hono](https://hono.dev/)
+## Usage
+
+```bash
+quack [options]
+```
+
+### Options
+- `--port <number>`    Port to run the server on (default: 3000)
+- `--host <string>`    Host to bind the server to (default: localhost)
+- `--db <string>`      DuckDB database path (default: :memory:)
+- `--open`             Open browser automatically
+- `-h, --help`         Display help message
+
+### Examples
+
+Run on a custom port:
+```bash
+quack --port 3001 --open
+```

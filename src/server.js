@@ -18,7 +18,24 @@ const args = arg({
   "--host": String,
   "--db": String,
   "--open": Boolean,
+  "--help": Boolean,
+  "-h": "--help"
 });
+
+// Display help message if --help or -h is used
+if (args["--help"]) {
+  console.log(`
+Usage: quack [options]
+
+Options:
+  --port <number>    Port to run the server on (default: 3000)
+  --host <string>    Host to bind the server to (default: localhost)
+  --db <string>      DuckDB database path (default: :memory:)
+  --open             Open browser automatically
+  -h, --help         Display this help message
+  `);
+  process.exit(0);
+}
 
 const port = args["--port"] || 3000;
 const host = args["--host"] || "localhost";
