@@ -2,7 +2,7 @@
 
 A lightweight Express-based wrapper for DuckDB that brings [Quackbook](https://github.com/andreitere/quackbook) to your local environment.
 
-![quack demo](https://tere-ro.b-cdn.net/github/quack-demo-1.gif)
+![QuackBook Screenshot](https://cdn.swninja.win/u/198K8n.gif)
 
 ## Features
 
